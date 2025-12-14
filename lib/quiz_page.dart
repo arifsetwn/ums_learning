@@ -1,11 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-
-void main() {
-  runApp(
-    const MaterialApp(home: QuizPage(), debugShowCheckedModeBanner: false),
-  );
-}
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class QuizPage extends StatefulWidget {
   const QuizPage({super.key});
@@ -35,95 +30,36 @@ class _QuizPageState extends State<QuizPage> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchQuestions() async {
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      // Timeout 5 detik untuk menghindari loading terlalu lama
+      final snapshot = await FirebaseFirestore.instance
+          .collection('questions')
+          .get()
+          .timeout(const Duration(seconds: 5));
 
-    return [
-      {
-        'question':
-            '1. Program studi apa saja yang ada di FKIP UMS yang berkaitan dengan teknologi?',
-        'options': [
-          'Pendidikan Teknik Mesin',
-          'Pendidikan Teknik Informatika',
-          'Pendidikan Akuntansi',
-          'Pendidikan Geografi',
-        ],
-        'answerIndex': 1,
-      },
-      {
-        'question': '2. Apa visi utama dari FKIP UMS?',
-        'options': [
-          'Menjadi pusat wirausaha',
-          'Menjadi pusat pengembangan seni',
-          'Menjadi pusat penyiapan tenaga kependidikan yang Islami',
-          'Menjadi pusat teknologi nuklir',
-        ],
-        'answerIndex': 2,
-      },
-      {
-        'question':
-            '3. Gelar akademik lulusan S1 Pendidikan Teknik Informatika adalah?',
-        'options': ['S.T.', 'S.Kom.', 'S.Pd.', 'S.Pd.T.'],
-        'answerIndex': 2,
-      },
-      {
-        'question': '4. Organisasi mahasiswa tingkat fakultas disebut?',
-        'options': ['HMP', 'BEM Fakultas', 'UKM', 'IMM'],
-        'answerIndex': 1,
-      },
-      {
-        'question':
-            '5. Salah satu kompetensi utama yang harus dimiliki calon guru adalah?',
-        'options': [
-          'Kompetensi Pedagogik',
-          'Kompetensi Medis',
-          'Kompetensi Agrikultur',
-          'Kompetensi Maritim',
-        ],
-        'answerIndex': 0,
-      },
-      {
-        'question': '6. Program Pendidikan Profesi Guru (PPG) bertujuan untuk?',
-        'options': [
-          'Mendapatkan gelar S2',
-          'Mencetak guru profesional bersertifikat',
-          'Magang kerja di pabrik',
-          'Liburan semester',
-        ],
-        'answerIndex': 1,
-      },
-      {
-        'question': '7. Dimana lokasi kampus utama FKIP UMS?',
-        'options': ['Kampus 1', 'Kampus 2', 'Kampus 3', 'Kampus 4'],
-        'answerIndex': 0,
-      },
-      {
-        'question': '8. Semboyan UMS yang menjadi landasan pendidikan adalah?',
-        'options': [
-          'Wacana Keilmuan dan Keislaman',
-          'Maju Terus Pantang Mundur',
-          'Unggul dan Mendunia',
-          'Berkarakter dan Berbudaya',
-        ],
-        'answerIndex': 0,
-      },
-      {
-        'question':
-            '9. Laboratorium yang digunakan untuk latihan mengajar disebut?',
-        'options': ['Lab Komputer', 'Microteaching', 'Bengkel', 'Greenhouse'],
-        'answerIndex': 1,
-      },
-      {
-        'question':
-            '10. Tri Dharma Perguruan Tinggi meliputi Pendidikan, Penelitian, dan?',
-        'options': [
-          'Pengajaran',
-          'Pengabdian kepada Masyarakat',
-          'Perdagangan',
-          'Pariwisata',
-        ],
-        'answerIndex': 1,
-      },
-    ];
+      if (snapshot.docs.isEmpty) {
+        // Jika collection kosong, throw error
+        throw Exception('Data soal tidak ditemukan di server');
+      }
+
+      return snapshot.docs.map((doc) {
+        return {
+          'question': doc['question'],
+          'options': List<String>.from(doc['options']),
+          'answerIndex': doc['answerIndex'],
+        };
+      }).toList();
+    } on TimeoutException {
+      throw Exception('Koneksi timeout. Periksa koneksi internet Anda.');
+    } catch (e) {
+      throw Exception('Server Error: Gagal memuat soal dari server.');
+    }
+  }
+
+  void _retryFetch() {
+    setState(() {
+      _questionsFuture = _fetchQuestions();
+    });
   }
 
   void _submitQuiz() {
@@ -174,10 +110,55 @@ class _QuizPageState extends State<QuizPage> {
         future: _questionsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Memuat soal dari server...'),
+                ],
+              ),
+            );
           }
+
           if (snapshot.hasError) {
-            return Center(child: Text('Error memuat soal: ${snapshot.error}'));
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: Colors.red,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Server Error',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${snapshot.error}'.replaceAll('Exception: ', ''),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _retryFetch,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Coba Lagi'),
+                    ),
+                  ],
+                ),
+              ),
+            );
           }
 
           if (snapshot.hasData) {
